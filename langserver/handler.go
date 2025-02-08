@@ -38,15 +38,16 @@ type lintRequest struct {
 
 // Config is
 type Config struct {
-	Version        int                    `yaml:"version"`
-	LogFile        string                 `yaml:"log-file"`
-	LogLevel       int                    `yaml:"log-level"       json:"logLevel"`
-	Commands       *[]Command             `yaml:"commands"        json:"commands"`
-	Languages      *map[string][]Language `yaml:"languages"       json:"languages"`
-	RootMarkers    *[]string              `yaml:"root-markers"    json:"rootMarkers"`
-	TriggerChars   []string               `yaml:"trigger-chars"   json:"triggerChars"`
-	LintDebounce   Duration               `yaml:"lint-debounce"   json:"lintDebounce"`
-	FormatDebounce Duration               `yaml:"format-debounce" json:"formatDebounce"`
+	Version             int                    `yaml:"version"`
+	LogFile             string                 `yaml:"log-file"`
+	LogLevel            int                    `yaml:"log-level"       json:"logLevel"`
+	Commands            *[]Command             `yaml:"commands"        json:"commands"`
+	Languages           *map[string][]Language `yaml:"languages"       json:"languages"`
+	RootMarkers         *[]string              `yaml:"root-markers"    json:"rootMarkers"`
+	TriggerChars        []string               `yaml:"trigger-chars"   json:"triggerChars"`
+	LintDebounce        Duration               `yaml:"lint-debounce"   json:"lintDebounce"`
+	FormatDebounce      Duration               `yaml:"format-debounce" json:"formatDebounce"`
+	PublishLogsToMethod string                 `yaml:"publish-logs-to-method"`
 
 	// Toggle support for "go to definition" requests.
 	ProvideDefinition bool `yaml:"provide-definition"`
@@ -94,17 +95,15 @@ type Language struct {
 	RootMarkers        []string          `yaml:"root-markers" json:"rootMarkers"`
 	RequireMarker      bool              `yaml:"require-marker" json:"requireMarker"`
 	Commands           []Command         `yaml:"commands" json:"commands"`
+	CheckInstall       string            `yaml:"check-install" json:"checkInstall"`
+	DoInstall          string            `yaml:"do-install" json:"doInstall"`
 }
 
 // NewHandler create JSON-RPC handler for this language server.
 func NewHandler(config *Config) jsonrpc2.Handler {
-	if config.Logger == nil {
-		config.Logger = log.New(os.Stderr, "", log.LstdFlags)
-	}
-
 	handler := &langHandler{
 		loglevel:          config.LogLevel,
-		logger:            config.Logger,
+		logger:            NewLogger(config.Logger, handler, config.PublishLogsToMethod), // Use Logger
 		commands:          *config.Commands,
 		configs:           *config.Languages,
 		provideDefinition: config.ProvideDefinition,
@@ -129,7 +128,7 @@ func NewHandler(config *Config) jsonrpc2.Handler {
 type langHandler struct {
 	mu                sync.Mutex
 	loglevel          int
-	logger            *log.Logger
+	logger            *Logger
 	commands          []Command
 	configs           map[string][]Language
 	provideDefinition bool
@@ -241,16 +240,6 @@ func (h *langHandler) lintRequest(uri DocumentURI, eventType eventType) {
 	})
 }
 
-func (h *langHandler) logMessage(typ MessageType, message string) {
-	h.conn.Notify(
-		context.Background(),
-		"window/logMessage",
-		&LogMessageParams{
-			Type:    typ,
-			Message: message,
-		})
-}
-
 func (h *langHandler) linter() {
 	running := make(map[DocumentURI]context.CancelFunc)
 
@@ -356,6 +345,37 @@ func isFilename(s string) bool {
 	}
 }
 
+func isToolInstalled(command string) bool {
+	cmd := exec.Command("sh", "-c", command)
+	err := cmd.Run()
+	return err == nil
+}
+
+func installTool(command string) error {
+	cmd := exec.Command("sh", "-c", command)
+	err := cmd.Run()
+	return err
+}
+
+func (h *langHandler) emitDiagnostic(message string) {
+	diagnostic := Diagnostic{
+		Range: Range{
+			Start: Position{Line: 0, Character: 0},
+			End:   Position{Line: 0, Character: 1},
+		},
+		Message:  message,
+		Severity: 1,
+	}
+
+	h.conn.Notify(
+		context.Background(),
+		"textDocument/publishDiagnostics",
+		&PublishDiagnosticsParams{
+			URI:         "",
+			Diagnostics: []Diagnostic{diagnostic},
+		})
+}
+
 func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType eventType) (map[DocumentURI][]Diagnostic, error) {
 	f, ok := h.files[uri]
 	if !ok {
@@ -403,7 +423,8 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 
 	if len(configs) == 0 {
 		if h.loglevel >= 1 {
-			h.logger.Printf("lint for LanguageID not supported: %v", f.LanguageID)
+			message := fmt.Sprintf("lint for LanguageID not supported: %v", f.LanguageID)
+			h.logger.Println(message)
 		}
 		return map[DocumentURI][]Diagnostic{}, nil
 	}
@@ -413,6 +434,27 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 	}
 	publishedURIs := make(map[DocumentURI]struct{})
 	for i, config := range configs {
+		// Check if the tool is installed
+		if config.CheckInstall != "" && !isToolInstalled(config.CheckInstall) {
+			// Emit diagnostic and log error if the tool is not installed
+			message := fmt.Sprintf("Tool not installed: %v", config.CheckInstall)
+			h.logger.Println(message)
+
+			// Install the tool if not installed
+			if config.DoInstall != "" {
+				err := installTool(config.DoInstall)
+				if err != nil {
+					// Emit diagnostic and log error if installation fails
+					message = fmt.Sprintf("Failed to install tool: %v", err)
+					h.logger.Println(message)
+					continue
+				}
+			} else {
+				h.logger.Printf("Tool not installed and no install command provided: %v", config.CheckInstall)
+				continue
+			}
+		}
+
 		// To publish empty diagnostics when errors are fixed
 		if config.LintWorkspace {
 			for lastPublishedURI := range h.lastPublishedURIs[f.LanguageID] {
@@ -464,9 +506,9 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 		// return with zero value. We can not handle the output is real result
 		// or output of usage. So efm-langserver ignore that command exiting
 		// with zero-value. So if you want to handle the command which exit
-		// with zero value, please specify lint-ignore-exit-code.
+		// with zero value, please specify lint-ignore-exit-code: true.
 		if err == nil && !config.LintIgnoreExitCode {
-			h.logMessage(LogError, "command `"+command+"` exit with zero. probably you forgot to specify `lint-ignore-exit-code: true`.")
+			h.logger.Printf("command `%s` exit with zero. probably you forgot to specify `lint-ignore-exit-code: true`.", command)
 			continue
 		}
 		if h.loglevel >= 3 {
