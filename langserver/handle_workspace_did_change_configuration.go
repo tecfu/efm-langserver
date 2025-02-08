@@ -54,7 +54,7 @@ func (h *langHandler) didChangeConfiguration(config *Config) (any, error) {
 					w.Close()
 				}
 			}
-			h.logger = log.New(f, "", log.LstdFlags)
+			h.logger = NewLogger(log.New(f, "", log.LstdFlags), h, config.PublishLogsToMethod)
 		}
 	}
 

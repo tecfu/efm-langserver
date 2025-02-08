@@ -130,7 +130,7 @@ func (h *langHandler) executeCommand(params *ExecuteCommandParams) (any, error) 
 			return nil, err
 		}
 		if h.loglevel >= 3 {
-			h.logger.Print(strings.Join(cmd.Args, " ")+":", string(b))
+			h.logger.Println(strings.Join(cmd.Args, " ") + ": " + string(b))
 		}
 		output = string(b)
 	} else {
@@ -146,7 +146,7 @@ func (h *langHandler) executeCommand(params *ExecuteCommandParams) (any, error) 
 			h.loglevel = config.LogLevel
 			h.lintDebounce = time.Duration(config.LintDebounce)
 		}
-		h.logMessage(LogInfo, "Reloaded configuration file")
+		h.logger.Println("Reloaded configuration file")
 		output = "OK"
 	}
 

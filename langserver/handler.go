@@ -103,7 +103,6 @@ type Language struct {
 func NewHandler(config *Config) jsonrpc2.Handler {
 	handler := &langHandler{
 		loglevel:          config.LogLevel,
-		logger:            NewLogger(config.Logger, handler, config.PublishLogsToMethod), // Use Logger
 		commands:          *config.Commands,
 		configs:           *config.Languages,
 		provideDefinition: config.ProvideDefinition,
@@ -121,6 +120,8 @@ func NewHandler(config *Config) jsonrpc2.Handler {
 
 		lastPublishedURIs: make(map[string]map[DocumentURI]struct{}),
 	}
+
+	handler.logger = NewLogger(config.Logger, handler, config.PublishLogsToMethod) // Use Logger
 	go handler.linter()
 	return jsonrpc2.HandlerWithError(handler.handle)
 }
