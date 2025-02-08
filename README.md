@@ -26,12 +26,7 @@ generated from specified command. This is useful for editing code with linter.
 ## Installation
 
 ```console
-go install github.com/mattn/efm-langserver@latest
-```
-
-or via [Homebrew](https://brew.sh/):
-```console
-brew install efm-langserver
+go install github.com/tecfu/efm-langserver@latest
 ```
 
 ## Usage
