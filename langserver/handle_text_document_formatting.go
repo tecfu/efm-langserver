@@ -198,7 +198,18 @@ Configs:
 		cmd.Stderr = &buf
 		b, err := cmd.Output()
 		if err != nil {
-			h.logger.Println(command+":", buf.String())
+			outputMessage := fmt.Sprintf("formatter error: %v", err.Error()+"\n\nCommand: "+command+"\n\nstring(b): "+string(b)+"\nbuf.String(): "+buf.String())
+
+			h.logger.Println("command returned error:"+command+":", outputMessage)
+
+			h.conn.Notify(
+				context.Background(),
+				"window/showMessage",
+				&ShowMessageParams{
+					Type:    3, // Error message type
+					Message: outputMessage,
+				},
+			)
 			continue
 		}
 
