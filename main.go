@@ -13,12 +13,12 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"gopkg.in/yaml.v3"
 
-	"github.com/mattn/efm-langserver/langserver"
+	"github.com/tecfu/efm-langserver/langserver"
 )
 
 const (
 	name    = "efm-langserver"
-	version = "0.0.54"
+	version = "0.0.55"
 )
 
 var revision = "HEAD"
@@ -68,15 +68,35 @@ func main() {
 		}
 	}
 
-	config, err := langserver.LoadConfig(yamlfile)
-	if err != nil {
-		log.Fatal(err)
-	}
+   config, err := langserver.LoadConfig(yamlfile)
+   if err != nil {
+       // Create a temporary connection to the langserver
+       conn := jsonrpc2.NewConn(
+           context.Background(),
+           jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
+           jsonrpc2.HandlerWithError(nil),
+       )
+      if conn == nil {
+          log.Println("Failed to establish connection")
+          os.Exit(1)
+      }
+     langserver.LogMessageStandalone(conn, langserver.LogError, fmt.Sprintf("Failed to load config: %v", err))
+     conn.Close()
+     os.Exit(1)
+   }
 
 	if dump {
 		err = yaml.NewEncoder(os.Stdout).Encode(&config)
 		if err != nil {
-			log.Fatal(err)
+      log.Fatal(err)
+      // Create a temporary connection to the langserver
+      conn := jsonrpc2.NewConn(
+          context.Background(),
+          jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
+          jsonrpc2.HandlerWithError(nil),
+      )
+      langserver.LogMessageStandalone(conn, langserver.LogError, err.Error())
+      conn.Close()
 		}
 		os.Exit(0)
 	}

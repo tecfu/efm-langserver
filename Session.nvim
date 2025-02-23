@@ -1,0 +1,201 @@
+let SessionLoad = 1
+let s:so_save = &g:so | let s:siso_save = &g:siso | setg so=0 siso=0 | setl so=-1 siso=-1
+let v:this_session=expand("<sfile>:p")
+silent only
+silent tabonly
+cd ~/Documents/GitHub/efm-langserver
+if expand('%') == '' && !&modified && line('$') <= 1 && getline(1) == ''
+  let s:wipebuf = bufnr('%')
+endif
+let s:shortmess_save = &shortmess
+if &shortmess =~ 'A'
+  set shortmess=aoOA
+else
+  set shortmess=aoO
+endif
+badd +244 langserver/handler.go
+badd +8 langserver/config.go
+badd +93 main.go
+badd +10 langserver/notify.go
+badd +0 go.mod
+badd +1 langserver
+badd +45 langserver/lsp.go
+badd +168 langserver/handle_text_document_code_action.go
+badd +0 term://~/Documents/GitHub/efm-langserver//387572:aider\ --model\ gemini/gemini-exp-1206\ --no-auto-commits\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handler.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/config.go\'\ \'/home/base/Documents/GitHub/efm-langserver/main.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/notify.go\'\ \'/home/base/Documents/GitHub/efm-langserver/go.mod\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/lsp.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handle_text_document_code_action.go\'
+argglobal
+%argdel
+tabnew +setlocal\ bufhidden=wipe
+tabnew +setlocal\ bufhidden=wipe
+tabnew +setlocal\ bufhidden=wipe
+tabnew +setlocal\ bufhidden=wipe
+tabrewind
+edit main.go
+let s:save_splitbelow = &splitbelow
+let s:save_splitright = &splitright
+set splitbelow splitright
+wincmd _ | wincmd |
+vsplit
+1wincmd h
+wincmd w
+let &splitbelow = s:save_splitbelow
+let &splitright = s:save_splitright
+wincmd t
+let s:save_winminheight = &winminheight
+let s:save_winminwidth = &winminwidth
+set winminheight=0
+set winheight=1
+set winminwidth=0
+set winwidth=1
+exe 'vert 1resize ' . ((&columns * 86 + 87) / 174)
+exe 'vert 2resize ' . ((&columns * 87 + 87) / 174)
+argglobal
+balt langserver/handler.go
+setlocal fdm=indent
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=6
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+27
+normal! zo
+73
+normal! zo
+73
+normal! zo
+85
+normal! zo
+87
+normal! zo
+let s:l = 93 - ((18 * winheight(0) + 19) / 38)
+if s:l < 1 | let s:l = 1 | endif
+keepjumps exe s:l
+normal! zt
+keepjumps 93
+normal! 037|
+wincmd w
+argglobal
+if bufexists(fnamemodify("term://~/Documents/GitHub/efm-langserver//387572:aider\ --model\ gemini/gemini-exp-1206\ --no-auto-commits\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handler.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/config.go\'\ \'/home/base/Documents/GitHub/efm-langserver/main.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/notify.go\'\ \'/home/base/Documents/GitHub/efm-langserver/go.mod\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/lsp.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handle_text_document_code_action.go\'", ":p")) | buffer term://~/Documents/GitHub/efm-langserver//387572:aider\ --model\ gemini/gemini-exp-1206\ --no-auto-commits\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handler.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/config.go\'\ \'/home/base/Documents/GitHub/efm-langserver/main.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/notify.go\'\ \'/home/base/Documents/GitHub/efm-langserver/go.mod\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/lsp.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handle_text_document_code_action.go\' | else | edit term://~/Documents/GitHub/efm-langserver//387572:aider\ --model\ gemini/gemini-exp-1206\ --no-auto-commits\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handler.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/config.go\'\ \'/home/base/Documents/GitHub/efm-langserver/main.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/notify.go\'\ \'/home/base/Documents/GitHub/efm-langserver/go.mod\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/lsp.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handle_text_document_code_action.go\' | endif
+if &buftype ==# 'terminal'
+  silent file term://~/Documents/GitHub/efm-langserver//387572:aider\ --model\ gemini/gemini-exp-1206\ --no-auto-commits\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handler.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/config.go\'\ \'/home/base/Documents/GitHub/efm-langserver/main.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/notify.go\'\ \'/home/base/Documents/GitHub/efm-langserver/go.mod\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/lsp.go\'\ \'/home/base/Documents/GitHub/efm-langserver/langserver/handle_text_document_code_action.go\'
+endif
+balt main.go
+setlocal fdm=indent
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=2
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+let s:l = 270 - ((0 * winheight(0) + 19) / 38)
+if s:l < 1 | let s:l = 1 | endif
+keepjumps exe s:l
+normal! zt
+keepjumps 270
+normal! 03|
+wincmd w
+exe 'vert 1resize ' . ((&columns * 86 + 87) / 174)
+exe 'vert 2resize ' . ((&columns * 87 + 87) / 174)
+tabnext
+edit langserver/handler.go
+let s:save_splitbelow = &splitbelow
+let s:save_splitright = &splitright
+set splitbelow splitright
+let &splitbelow = s:save_splitbelow
+let &splitright = s:save_splitright
+wincmd t
+let s:save_winminheight = &winminheight
+let s:save_winminwidth = &winminwidth
+set winminheight=0
+set winheight=1
+set winminwidth=0
+set winwidth=1
+argglobal
+setlocal fdm=indent
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=8
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+let s:l = 254 - ((19 * winheight(0) + 19) / 38)
+if s:l < 1 | let s:l = 1 | endif
+keepjumps exe s:l
+normal! zt
+keepjumps 254
+normal! 0
+tabnext
+edit langserver/notify.go
+argglobal
+balt langserver/handler.go
+setlocal fdm=indent
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=8
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+let s:l = 8 - ((7 * winheight(0) + 19) / 38)
+if s:l < 1 | let s:l = 1 | endif
+keepjumps exe s:l
+normal! zt
+keepjumps 8
+normal! 017|
+tabnext
+edit langserver/lsp.go
+argglobal
+balt langserver/notify.go
+setlocal fdm=indent
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=2
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+let s:l = 443 - ((37 * winheight(0) + 19) / 38)
+if s:l < 1 | let s:l = 1 | endif
+keepjumps exe s:l
+normal! zt
+keepjumps 443
+normal! 0
+tabnext
+edit langserver/config.go
+argglobal
+balt langserver/handler.go
+setlocal fdm=indent
+setlocal fde=0
+setlocal fmr={{{,}}}
+setlocal fdi=#
+setlocal fdl=4
+setlocal fml=1
+setlocal fdn=20
+setlocal fen
+let s:l = 58 - ((37 * winheight(0) + 19) / 38)
+if s:l < 1 | let s:l = 1 | endif
+keepjumps exe s:l
+normal! zt
+keepjumps 58
+normal! 0
+tabnext 1
+if exists('s:wipebuf') && len(win_findbuf(s:wipebuf)) == 0 && getbufvar(s:wipebuf, '&buftype') isnot# 'terminal'
+  silent exe 'bwipe ' . s:wipebuf
+endif
+unlet! s:wipebuf
+set winheight=1 winwidth=20
+let &shortmess = s:shortmess_save
+let s:sx = expand("<sfile>:p:r")."x.vim"
+if filereadable(s:sx)
+  exe "source " . fnameescape(s:sx)
+endif
+let &g:so = s:so_save | let &g:siso = s:siso_save
+set hlsearch
+let g:this_session = v:this_session
+let g:this_obsession = v:this_session
+doautoall SessionLoadPost
+unlet SessionLoad
+" vim: set ft=vim :
