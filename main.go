@@ -70,18 +70,7 @@ func main() {
 
    config, err := langserver.LoadConfig(yamlfile)
    if err != nil {
-       // Create a temporary connection to the langserver
-       conn := jsonrpc2.NewConn(
-           context.Background(),
-           jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
-           jsonrpc2.HandlerWithError(nil),
-       )
-      if conn == nil {
-          log.Println("Failed to establish connection")
-          os.Exit(1)
-      }
-     langserver.LogMessageStandalone(conn, langserver.LogError, fmt.Sprintf("Failed to load config: %v", err))
-     conn.Close()
+     langserver.LogMessageStandalone(langserver.LogError, fmt.Sprintf("Failed to load config from %s: %v", yamlfile, err))
      os.Exit(1)
    }
 
@@ -89,14 +78,7 @@ func main() {
 		err = yaml.NewEncoder(os.Stdout).Encode(&config)
 		if err != nil {
       log.Fatal(err)
-      // Create a temporary connection to the langserver
-      conn := jsonrpc2.NewConn(
-          context.Background(),
-          jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
-          jsonrpc2.HandlerWithError(nil),
-      )
-      langserver.LogMessageStandalone(conn, langserver.LogError, err.Error())
-      conn.Close()
+      langserver.LogMessageStandalone(langserver.LogError, err.Error())
 		}
 		os.Exit(0)
 	}
@@ -140,25 +122,8 @@ func main() {
 	handler := langserver.NewHandler(config)
 	<-jsonrpc2.NewConn(
 		context.Background(),
-		jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
+		jsonrpc2.NewBufferedStream(langserver.Stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
 		handler, connOpt...).DisconnectNotify()
 
 	log.Println("efm-langserver: connections closed")
-}
-
-type stdrwc struct{}
-
-func (stdrwc) Read(p []byte) (int, error) {
-	return os.Stdin.Read(p)
-}
-
-func (c stdrwc) Write(p []byte) (int, error) {
-	return os.Stdout.Write(p)
-}
-
-func (c stdrwc) Close() error {
-	if err := os.Stdin.Close(); err != nil {
-		return err
-	}
-	return os.Stdout.Close()
 }
