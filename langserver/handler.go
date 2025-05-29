@@ -403,7 +403,7 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 
 	if len(configs) == 0 {
 		if h.loglevel >= 1 {
-			h.logger.Printf("lint for LanguageID not supported: %v", f.LanguageID)
+			h.logger.Printf("check configuration for linting `%s`, unable to load LanguageID")
 		}
 		return map[DocumentURI][]Diagnostic{}, nil
 	}
@@ -470,11 +470,21 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 			continue
 		}
 		if h.loglevel >= 3 {
-			h.logger.Println(command+":", string(b))
+			h.logger.Println("[Ran Lint Command]: "+command)
+			h.logger.Println("[Lint Command Output]:", string(b))
 		}
 		var source *string
 		if config.LintSource != "" {
 			source = &configs[i].LintSource
+			if h.loglevel >= 3 {
+				src := "<nil>"
+				if source != nil {
+						src = *source
+						h.logger.Println("[Lint Command Source]:" + src)
+				} else {
+					h.logger.Println("[Lint Command Source]: nil")
+				}
+			}
 		}
 
 		var prefix string
