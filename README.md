@@ -11,6 +11,7 @@ generated from specified command. This is useful for editing code with linter.
 * [Usage](#usage)
   + [Configuration](#configuration)
     - [InitializeParams](#initializeparams)
+    - [JSON linter output and `lint-jq`](#json-linter-output-and-lint-jq)
   + [Example for config.yaml](#example-for-configyaml)
   + [Example for DidChangeConfiguration notification](#example-for-didchangeconfiguration-notification)
 * [Client Setup](#client-setup)
@@ -20,6 +21,7 @@ generated from specified command. This is useful for editing code with linter.
   + [Configuration for neovim builtin LSP with nvim-lspconfig](#configuration-for-neovim-builtin-lsp-with-nvim-lspconfig)
   + [Configuration for Helix](#configuration-for-helix)
   + [Configuration for VSCode](#configuration-for-vscode)
+  + [Configuration for SublimeText LSP](#configuration-for-sublimetext-lsp)
 * [License](#license)
 * [Author](#author)
 
@@ -86,6 +88,121 @@ Example
     }
 }
 ```
+
+### JSON linter output and `lint-jq`
+
+efm-langserver supports extracting diagnostics from JSON linter output using the `lint-jq` configuration key. This allows you to process arbitrary linter JSON output and map it to Language Server Protocol (LSP) diagnostics using a [jq](https://stedolan.github.io/jq/) filter.
+
+#### Required Diagnostic Format
+
+Each object emitted by your jq filter **must** contain the following fields:
+
+- `file`: (string) File path for the diagnostic.
+- `message`: (string) Diagnostic message.
+- `severity`: (string) One of `"error"`, `"warning"`, `"information"`, or `"hint"`.
+- `range`: (object) Must contain:
+  - `start`: object with `line` (int) and `character` (int)
+  - `end`: object with `line` (int) and `character` (int)
+- `rule`: (optional, string) Diagnostic code or rule name.
+
+The filter is applied using embedded jq ([gojq](https://github.com/itchyny/gojq)) after the linter command's output is parsed as JSON.
+
+If `lint-jq` is not set, efm-langserver falls back to errorformat-based line parsing.
+
+#### Example: Pyright output
+
+Given linter output like:
+
+```json
+{
+    "version": "1.1.401",
+    "time": "1748561753517",
+    "generalDiagnostics": [
+        {
+            "file": "/home/base/dotfiles/.vim/test/src/test.py",
+            "severity": "error",
+            "message": "\"hi\" is not defined",
+            "range": {
+                "start": {
+                    "line": 2,
+                    "character": 0
+                },
+                "end": {
+                    "line": 2,
+                    "character": 2
+                }
+            },
+            "rule": "reportUndefinedVariable"
+        },
+        {
+            "file": "/home/base/dotfiles/.vim/test/src/test.py",
+            "severity": "warning",
+            "message": "Expression value is unused",
+            "range": {
+                "start": {
+                    "line": 2,
+                    "character": 0
+                },
+                "end": {
+                    "line": 2,
+                    "character": 2
+                }
+            },
+            "rule": "reportUnusedExpression"
+        }
+    ],
+    "summary": {
+        "filesAnalyzed": 2,
+        "errorCount": 1,
+        "warningCount": 1,
+        "informationCount": 0,
+        "timeInSec": 0.397
+    }
+}
+```
+
+You would set your config as:
+
+```yaml
+lint-command: 'pyright --outputjson ${INPUT}'
+lint-jq: '.generalDiagnostics[] | {file, message, severity, range, rule}'
+```
+
+#### Example: Custom linter output
+
+If your linter outputs a different JSON structure, your jq filter should extract diagnostics and map fields to the required structure. For example:
+
+##### Linter Output
+
+```json
+{
+  "results": [
+    {
+      "filename": "main.go",
+      "msg": "Unused variable",
+      "level": "warning",
+      "span": {
+        "start": {"line": 10, "character": 4},
+        "end": {"line": 10, "character": 15}
+      },
+      "code": "UNUSED_VAR"
+    }
+  ]
+}
+```
+
+##### efm-langserver config
+
+```yaml
+lint-command: 'myjsonlint --json ${INPUT}'
+lint-jq: '.results[] | {file: .filename, message: .msg, severity: .level, range: .span, rule: .code}'
+```
+
+#### Notes
+
+- If `lint-jq` is not set, efm-langserver falls back to errorformat-based line parsing.
+- The `lint-jq` filter is evaluated using embedded jq (via [gojq](https://github.com/itchyny/gojq)).
+- Line and character numbers are zero-based, as required by the LSP.
 
 ### Example for config.yaml
 
@@ -264,11 +381,16 @@ tools:
       W: W
       E: E
       F: E
+- 
+  pyright: &pyright
+    lint-command: 'pyright --outputjson ${INPUT}'
+    lint-stdin: false
+    lint-ignore-exit-code: false
+    lint-after-open: true
+    lint-jq: '.generalDiagnostics[] | {file, message, severity, range, rule}'
 
   python-yapf: &python-yapf
     format-command: 'yapf --quiet'
-    format-stdin: true
-
   rst-lint: &rst-lint
     lint-command: 'rst-lint'
     lint-formats:

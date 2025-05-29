@@ -3,6 +3,7 @@ package langserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf16"
 
+	"github.com/itchyny/gojq"
 	"github.com/reviewdog/errorformat"
 	"github.com/sourcegraph/jsonrpc2"
 
@@ -78,6 +80,7 @@ type Language struct {
 	LintWorkspace      bool              `yaml:"lint-workspace" json:"lintWorkspace"`
 	LintAfterOpen      bool              `yaml:"lint-after-open" json:"lintAfterOpen"`
 	LintOnSave         bool              `yaml:"lint-on-save" json:"lintOnSave"`
+	LintJQ             string            `yaml:"lint-jq" json:"lintJq"`
 	FormatCommand      string            `yaml:"format-command" json:"formatCommand"`
 	FormatCanRange     bool              `yaml:"format-can-range" json:"formatCanRange"`
 	FormatStdin        bool              `yaml:"format-stdin" json:"formatStdin"`
@@ -473,6 +476,64 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 			h.logger.Println("[Ran Lint Command]: "+command)
 			h.logger.Println("[Lint Command Output]:", string(b))
 		}
+		if config.LintJQ != "" {
+			var jsonData any
+			if err := json.Unmarshal(b, &jsonData); err == nil {
+				query, err := gojq.Parse(config.LintJQ)
+				if err == nil {
+					iter := query.Run(jsonData)
+					for {
+						v, ok := iter.Next()
+						if !ok {
+							break
+						}
+						diagMap, ok := v.(map[string]interface{})
+						if !ok {
+							continue
+						}
+						file, _ := diagMap["file"].(string)
+						message, _ := diagMap["message"].(string)
+						severityStr, _ := diagMap["severity"].(string)
+						rule, _ := diagMap["rule"].(string)
+						var rng Range
+						if r, ok := diagMap["range"].(map[string]interface{}); ok {
+							if s, ok := r["start"].(map[string]interface{}); ok {
+								rng.Start.Line = int(safeFloat(s["line"]))
+								rng.Start.Character = int(safeFloat(s["character"]))
+							}
+							if e, ok := r["end"].(map[string]interface{}); ok {
+								rng.End.Line = int(safeFloat(e["line"]))
+								rng.End.Character = int(safeFloat(e["character"]))
+							}
+						}
+						severity := 1
+						switch strings.ToLower(severityStr) {
+						case "error":
+							severity = 1
+						case "warning":
+							severity = 2
+						case "information", "info":
+							severity = 3
+						case "hint":
+							severity = 4
+						}
+						uriForDiag := uri
+						if file != "" {
+							uriForDiag = toURI(file)
+						}
+						diag := Diagnostic{
+							Range:    rng,
+							Severity: severity,
+							Message:  message,
+							Code:     &rule,
+							Source:   nil,
+						}
+						uriToDiagnostics[uriForDiag] = append(uriToDiagnostics[uriForDiag], diag)
+					}
+					continue
+				}
+			}
+		}
 		var source *string
 		if config.LintSource != "" {
 			source = &configs[i].LintSource
@@ -595,6 +656,26 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 		}
 	}
 	return uriToDiagnostics, nil
+}
+
+func safeFloat(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case uint:
+		return float64(n)
+	case uint32:
+		return float64(n)
+	case uint64:
+		return float64(n)
+	}
+	return 0
 }
 
 func itoaPtrIfNotZero(n int) *string {
