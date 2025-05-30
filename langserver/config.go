@@ -47,10 +47,16 @@ func LoadConfig(yamlfile string) (*Config, error) {
 		config.Languages = &languages
 	}
 	config.Filename = yamlfile
-	for _, v := range *config.Languages {
-		for _, l := range v {
-			if l.HoverChars == "" {
-				l.HoverChars = "_"
+	for _, langConfigs := range *config.Languages {
+		for i := range langConfigs {
+			if langConfigs[i].HoverChars == "" {
+				langConfigs[i].HoverChars = "_"
+			}
+			// Initialize passthrough server configs with defaults if needed
+			if langConfigs[i].Passthrough != nil && langConfigs[i].Passthrough.Command != "" {
+				if langConfigs[i].Passthrough.Args == nil {
+					langConfigs[i].Passthrough.Args = []string{}
+				}
 			}
 		}
 	}

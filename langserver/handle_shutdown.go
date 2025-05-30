@@ -11,6 +11,21 @@ func (h *langHandler) handleShutdown(_ context.Context, conn *jsonrpc2.Conn, _ *
 		h.lintTimer.Stop()
 	}
 
+	// Close all passthrough server connections
+	for key, server := range h.passthroughServers {
+		if h.loglevel >= 1 {
+			h.logger.Printf("shutting down passthrough server: %s", key)
+		}
+		
+		// Try to send the server a shutdown request
+		if server.conn != nil {
+			_ = server.conn.Call(context.Background(), "shutdown", nil, nil)
+		}
+		
+		// Terminate the process
+		_ = server.cmd.Process.Kill()
+	}
+
 	close(h.request)
-	return nil, conn.Close()
+	return nil, nil
 }

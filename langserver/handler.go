@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -24,6 +25,8 @@ import (
 
 	"github.com/mattn/go-unicodeclass"
 )
+
+// Using wildcard from lsp.go instead of redefining here
 
 type eventType int
 
@@ -65,6 +68,12 @@ type Config1 struct {
 	Languages map[string]Language `yaml:"languages"`
 }
 
+// Passthrough defines configuration for passing through requests to another language server
+type Passthrough struct {
+	Command string   `yaml:"command" json:"command"`
+	Args    []string `yaml:"args" json:"args"`
+}
+
 // Language is
 type Language struct {
 	Prefix             string            `yaml:"prefix" json:"prefix"`
@@ -97,6 +106,7 @@ type Language struct {
 	RootMarkers        []string          `yaml:"root-markers" json:"rootMarkers"`
 	RequireMarker      bool              `yaml:"require-marker" json:"requireMarker"`
 	Commands           []Command         `yaml:"commands" json:"commands"`
+	Passthrough        *Passthrough      `yaml:"passthrough" json:"passthrough"`
 }
 
 // NewHandler create JSON-RPC handler for this language server.
@@ -124,9 +134,34 @@ func NewHandler(config *Config) jsonrpc2.Handler {
 		triggerChars:   config.TriggerChars,
 
 		lastPublishedURIs: make(map[string]map[DocumentURI]struct{}),
+		passthroughServers: make(map[string]*PassthroughServer),
 	}
+	
+	// Log configuration information for debugging
+	handler.logger.Printf("Initializing language handler with %d language configurations", len(handler.configs))
+	for langID, langConfigs := range handler.configs {
+		for _, cfg := range langConfigs {
+			if cfg.Passthrough != nil {
+				handler.logger.Printf("Found passthrough configuration for language %s: %s %v", 
+					langID, cfg.Passthrough.Command, cfg.Passthrough.Args)
+			}
+		}
+	}
+	
 	go handler.linter()
 	return jsonrpc2.HandlerWithError(handler.handle)
+}
+
+// PassthroughServer represents a connection to another language server
+type PassthroughServer struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	conn   *jsonrpc2.Conn
+	mutex  sync.Mutex
+	logger *log.Logger
+	langID string
+	command string
 }
 
 type langHandler struct {
@@ -151,7 +186,8 @@ type langHandler struct {
 
 	// lastPublishedURIs is mapping from LanguageID string to mapping of
 	// whether diagnostics are published in a DocumentURI or not.
-	lastPublishedURIs map[string]map[DocumentURI]struct{}
+	lastPublishedURIs   map[string]map[DocumentURI]struct{}
+	passthroughServers  map[string]*PassthroughServer
 }
 
 // File is
@@ -406,7 +442,7 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 
 	if len(configs) == 0 {
 		if h.loglevel >= 1 {
-			h.logger.Printf("check configuration for linting `%s`, unable to load LanguageID")
+			h.logger.Printf("check configuration for linting `%s`, unable to load LanguageID", f.LanguageID)
 		}
 		return map[DocumentURI][]Diagnostic{}, nil
 	}
@@ -538,10 +574,8 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 		if config.LintSource != "" {
 			source = &configs[i].LintSource
 			if h.loglevel >= 3 {
-				src := "<nil>"
 				if source != nil {
-						src = *source
-						h.logger.Println("[Lint Command Source]:" + src)
+					h.logger.Println("[Lint Command Source]:" + *source)
 				} else {
 					h.logger.Println("[Lint Command Source]: nil")
 				}
@@ -697,6 +731,23 @@ func (h *langHandler) saveFile(uri DocumentURI) error {
 }
 
 func (h *langHandler) openFile(uri DocumentURI, languageID string, version int) error {
+	h.logger.Printf("Opening file with language ID: %s", languageID)
+	
+	// Check if we have configuration for this language
+	if cfgs, ok := h.configs[languageID]; ok {
+		h.logger.Printf("Found %d configurations for language %s", len(cfgs), languageID)
+		
+		// Check for passthrough configurations
+		for _, cfg := range cfgs {
+			if cfg.Passthrough != nil {
+				h.logger.Printf("Found passthrough configuration for %s: %s", 
+					languageID, cfg.Passthrough.Command)
+			}
+		}
+	} else {
+		h.logger.Printf("No configurations found for language: %s", languageID)
+	}
+	
 	f := &File{
 		Text:       "",
 		LanguageID: languageID,
@@ -746,7 +797,277 @@ func (h *langHandler) addFolder(folder string) {
 	}
 }
 
+// LoggingStream is a wrapper around an io.Reader and io.Writer that logs all data
+type LoggingStream struct {
+	r      io.Reader
+	w      io.Writer
+	logger *log.Logger
+	langID string
+	command string
+}
+
+// NewLoggingStream creates a new logging stream
+func NewLoggingStream(r io.Reader, w io.Writer, logger *log.Logger, langID string, command string) *LoggingStream {
+	return &LoggingStream{
+		r:      r,
+		w:      w,
+		logger: logger,
+		langID: langID,
+		command: command,
+	}
+}
+
+// Read implements io.Reader
+func (l *LoggingStream) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	if err == nil && n > 0 {
+		l.logger.Printf("language server passthrough %s %s: notif <-- %s", 
+			l.langID, l.command, string(p[:n]))
+	}
+	return n, err
+}
+
+// Write implements io.Writer
+func (l *LoggingStream) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		l.logger.Printf("language server passthrough %s %s: notif --> %s", 
+			l.langID, l.command, string(p))
+	}
+	return l.w.Write(p)
+}
+
+// Close closes the underlying readers and writers if they implement io.Closer
+func (l *LoggingStream) Close() error {
+	var rerr, werr error
+	if rc, ok := l.r.(io.Closer); ok {
+		rerr = rc.Close()
+	}
+	if wc, ok := l.w.(io.Closer); ok {
+		werr = wc.Close()
+	}
+	if rerr != nil {
+		return rerr
+	}
+	return werr
+}
+
+// getPassthroughServer gets or creates a passthrough server for the given language
+func (h *langHandler) getPassthroughServer(languageID string, passthrough *Passthrough) (*PassthroughServer, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", languageID, passthrough.Command)
+	if server, ok := h.passthroughServers[key]; ok {
+		return server, nil
+	}
+
+	h.logger.Printf("Creating new passthrough server for %s using command: %s %v", 
+		languageID, passthrough.Command, passthrough.Args)
+	
+	// Create a new server
+	cmd := exec.Command(passthrough.Command, passthrough.Args...)
+	cmd.Env = os.Environ()
+	
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %v", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start passthrough server: %v", err)
+	}
+
+	// Create a dedicated logger for this passthrough server
+	serverLogger := log.New(h.logger.Writer(), fmt.Sprintf("[PASSTHROUGH:%s] ", passthrough.Command), log.LstdFlags)
+	serverLogger.Printf("Started passthrough language server process (PID: %d)", cmd.Process.Pid)
+	
+	server := &PassthroughServer{
+		cmd:    cmd,
+		stdin:  stdin,
+		stdout: stdout,
+		logger: serverLogger,
+		langID: languageID,
+		command: passthrough.Command,
+	}
+
+	// Create a logging stream that logs all data with the requested format
+	loggingStream := NewLoggingStream(stdout, stdin, serverLogger, languageID, passthrough.Command)
+
+	// Create a buffered stream using our logging stream
+	stream := jsonrpc2.NewBufferedStream(loggingStream, jsonrpc2.VSCodeObjectCodec{})
+	
+	// Create connection with appropriate context
+	server.conn = jsonrpc2.NewConn(context.Background(), stream, jsonrpc2.HandlerWithError(func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (interface{}, error) {
+		// Log incoming requests from the passthrough server
+		if req.Params != nil {
+			serverLogger.Printf("language server passthrough %s %s: notif <-- %s %s", 
+				languageID, passthrough.Command, req.Method, string(*req.Params))
+		} else {
+			serverLogger.Printf("language server passthrough %s %s: notif <-- %s", 
+				languageID, passthrough.Command, req.Method)
+		}
+		
+		// Just handle responses, not requests from the server
+		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound}
+	}))
+	
+	h.passthroughServers[key] = server
+	
+	h.logger.Printf("Successfully created passthrough server for %s: %s", languageID, passthrough.Command)
+	
+	return server, nil
+}
+
+// stdrwc is a helper type to implement io.Reader and io.Writer with io.Closer
+type stdrwc struct {
+	r io.Reader
+	w io.Writer
+}
+
+func (rw stdrwc) Read(p []byte) (int, error) {
+	return rw.r.Read(p)
+}
+
+func (rw stdrwc) Write(p []byte) (int, error) {
+	return rw.w.Write(p)
+}
+
+func (rw stdrwc) Close() error {
+	var rerr, werr error
+	if closer, ok := rw.r.(io.Closer); ok {
+		rerr = closer.Close()
+	}
+	if closer, ok := rw.w.(io.Closer); ok {
+		werr = closer.Close()
+	}
+	if rerr != nil {
+		return rerr
+	}
+	return werr
+}
+
+// findPassthrough determines if a passthrough is configured for the given URI/request
+func (h *langHandler) findPassthrough(uri DocumentURI, method string) (*Passthrough, string, bool) {
+	f, ok := h.files[uri]
+	if !ok {
+		h.logger.Printf("findPassthrough: Document not found for URI: %s", uri)
+		return nil, "", false
+	}
+	
+	h.logger.Printf("findPassthrough: Looking for passthrough config for language: %s", f.LanguageID)
+	
+	if cfgs, ok := h.configs[f.LanguageID]; ok {
+		for _, cfg := range cfgs {
+			if cfg.Passthrough != nil {
+				h.logger.Printf("findPassthrough: Found passthrough for %s: %s", 
+					f.LanguageID, cfg.Passthrough.Command)
+				return cfg.Passthrough, f.LanguageID, true
+			}
+		}
+		h.logger.Printf("findPassthrough: No passthrough configurations found for language: %s", f.LanguageID)
+	} else {
+		h.logger.Printf("findPassthrough: No configurations found for language: %s", f.LanguageID)
+	}
+	
+	return nil, "", false
+}
+
 func (h *langHandler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
+	h.mu.Lock()
+	if h.conn == nil {
+		h.conn = conn
+	}
+	h.mu.Unlock()
+
+	if h.loglevel >= 2 {
+		h.logger.Printf("Received request: %s", req.Method)
+		if req.Params != nil {
+			h.logger.Printf("Request params: %s", string(*req.Params))
+		}
+	}
+
+	if req.Params != nil {
+		// Try to extract URI from various request types
+		var uri DocumentURI
+		
+		switch req.Method {
+		case "textDocument/didOpen", "textDocument/didChange", "textDocument/didSave", "textDocument/didClose",
+			"textDocument/formatting", "textDocument/rangeFormatting", "textDocument/documentSymbol",
+			"textDocument/completion", "textDocument/definition", "textDocument/hover", "textDocument/codeAction":
+			
+			// These methods all have a TextDocument parameter with a URI
+			var params struct {
+				TextDocument struct {
+					URI       DocumentURI `json:"uri"`
+					LanguageID string      `json:"languageId,omitempty"`
+				} `json:"textDocument"`
+			}
+			if err := json.Unmarshal(*req.Params, &params); err == nil {
+				uri = params.TextDocument.URI
+				if h.loglevel >= 2 && req.Method == "textDocument/didOpen" {
+					h.logger.Printf("Opening document with language ID: %s", params.TextDocument.LanguageID)
+				}
+			}
+		}
+		
+		if uri != "" {
+			// Check if we have a passthrough configuration for this URI
+			passthrough, langID, ok := h.findPassthrough(uri, req.Method)
+			if ok {
+				// Get or create the passthrough server
+				server, err := h.getPassthroughServer(langID, passthrough)
+				if err != nil {
+					h.logger.Printf("Failed to create passthrough server: %v", err)
+					h.logMessage(LogError, fmt.Sprintf("Failed to create passthrough server: %v", err))
+				} else {
+					// Forward the request to the passthrough server
+					server.mutex.Lock()
+					defer server.mutex.Unlock()
+					
+					if h.loglevel >= 2 {
+						h.logger.Printf("Forwarding %s to passthrough server %s", req.Method, passthrough.Command)
+					}
+					
+					// Log the request that's being sent
+					if req.Params != nil {
+						server.logger.Printf("language server passthrough %s %s: notif --> %s %s", 
+							langID, passthrough.Command, req.Method, string(*req.Params))
+					} else {
+						server.logger.Printf("language server passthrough %s %s: notif --> %s", 
+							langID, passthrough.Command, req.Method)
+					}
+					
+					var result json.RawMessage
+					err = server.conn.Call(ctx, req.Method, req.Params, &result)
+					if err != nil {
+						server.logger.Printf("Error in passthrough request: %v", err)
+						if h.loglevel >= 1 {
+							h.logger.Printf("Passthrough error: %v", err)
+						}
+						return nil, err
+					}
+					
+					// Log the result
+					if len(result) > 0 {
+						server.logger.Printf("language server passthrough %s %s: notif <-- %s", 
+							langID, passthrough.Command, string(result))
+					} else {
+						server.logger.Printf("language server passthrough %s %s: notif <-- empty response", 
+							langID, passthrough.Command)
+					}
+					
+					return result, nil
+				}
+			}
+		}
+	}
+
+	// Handle the request with the original handler if not handled by passthrough
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(ctx, conn, req)
