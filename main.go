@@ -70,6 +70,7 @@ func main() {
 
 	config, err := langserver.LoadConfig(yamlfile)
 	if err != nil {
+		log.Printf("Failed to load config from %s: %v", yamlfile, err)
 		log.Fatal(err)
 	}
 
