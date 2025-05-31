@@ -28,12 +28,8 @@ generated from specified command. This is useful for editing code with linter.
 ## Installation
 
 ```console
-go install github.com/mattn/efm-langserver@latest
-```
-
-or via [Homebrew](https://brew.sh/):
-```console
-brew install efm-langserver
+git clone git@github.com:tecfu/efm-langserver.git
+go build -o ~/efm-langserver-updated¬
 ```
 
 ## Usage
@@ -87,6 +83,20 @@ Example
         "completion": true
     }
 }
+```
+
+### Wrapping file-based linters so can read from stdin
+
+```yml
+  pyright: &pyright
+    lint-command: "~/.vim/efm-stdin-file-wrapper.sh pyright --outputjson $tempfile"
+    lint-stdin: false
+    lint-ignore-exit-code: false
+    lint-after-open: true
+    lint-jq: '.generalDiagnostics[] | {file, message, severity, range, rule}'
+    rootMarkers:
+      - .git/
+      - requirements.txt
 ```
 
 ### JSON linter output and `lint-jq`

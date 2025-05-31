@@ -1,8 +1,9 @@
-module github.com/mattn/efm-langserver
+module github.com/tecfu/efm-langserver
 
 go 1.23
 
 require (
+	github.com/itchyny/gojq v0.12.17
 	github.com/mattn/go-unicodeclass v0.0.2
 	github.com/reviewdog/errorformat v0.0.0-20240608101709-1d3280ed6bd4
 	github.com/sourcegraph/jsonrpc2 v0.2.0
@@ -10,7 +11,6 @@ require (
 )
 
 require (
-	github.com/itchyny/gojq v0.12.17 // indirect
 	github.com/itchyny/timefmt-go v0.1.6 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
