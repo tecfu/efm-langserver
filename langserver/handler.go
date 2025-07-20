@@ -290,6 +290,16 @@ func (h *langHandler) logMessage(typ MessageType, message string) {
 		})
 }
 
+func (h *langHandler) showMessage(typ MessageType, message string) {
+	h.conn.Notify(
+		context.Background(),
+		"window/showMessage",
+		&ShowMessageParams{
+			Type:    typ,
+			Message: message,
+		})
+}
+
 func (h *langHandler) linter() {
 	running := make(map[DocumentURI]context.CancelFunc)
 
@@ -408,41 +418,89 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 	fname = filepath.ToSlash(fname)
 
 	var configs []Language
+	var hasConfigForLangID bool
+	var lintToolsForLangID int
+	var skippedReasons []string
 	if cfgs, ok := h.configs[f.LanguageID]; ok {
+		hasConfigForLangID = true
 		for _, cfg := range cfgs {
+			if cfg.LintCommand != "" {
+				lintToolsForLangID++
+			}
 			// if we require markers and find that they dont exist we do not add the configuration
 			if dir := matchRootPath(fname, cfg.RootMarkers); dir == "" && cfg.RequireMarker == true {
+				msg := fmt.Sprintf("skipping tool for language `%s` because `require-marker` is true and no root markers were found for file `%s`", f.LanguageID, fname)
+				if h.loglevel >= 1 {
+					h.logger.Printf(msg)
+				}
+				skippedReasons = append(skippedReasons, msg)
 				continue
 			}
 			switch eventType {
 			case eventTypeOpen:
 				// if LintAfterOpen is not true, ignore didOpen
 				if !cfg.LintAfterOpen {
+					msg := fmt.Sprintf("skipping tool for language `%s` on file open because `lint-after-open` is not true. Lint command: `%s`", f.LanguageID, cfg.LintCommand)
+					if h.loglevel >= 1 {
+						h.logger.Printf(msg)
+					}
+					skippedReasons = append(skippedReasons, msg)
 					continue
 				}
 			case eventTypeChange:
 				// if LintOnSave is true, ignore didChange
 				if cfg.LintOnSave {
+					msg := fmt.Sprintf("skipping tool for language `%s` on file change because `lint-on-save` is true. Lint command: `%s`", f.LanguageID, cfg.LintCommand)
+					if h.loglevel >= 1 {
+						h.logger.Printf(msg)
+					}
+					skippedReasons = append(skippedReasons, msg)
 					continue
 				}
 			default:
 			}
 			if cfg.LintCommand != "" {
+				if h.loglevel >= 1 {
+					h.logger.Printf("appending tool for language `%s` with lint command: `%s`", f.LanguageID, cfg.LintCommand)
+				}
 				configs = append(configs, cfg)
+			} else if h.loglevel >= 1 {
+				h.logger.Printf("skipping tool for language `%s` because `lint-command` is not defined.", f.LanguageID)
 			}
 		}
 	}
 	if cfgs, ok := h.configs[wildcard]; ok {
 		for _, cfg := range cfgs {
 			if cfg.LintCommand != "" {
+				if h.loglevel >= 1 {
+					h.logger.Printf("appending wildcard tool for language `%s` with lint command: `%s`", f.LanguageID, cfg.LintCommand)
+				}
 				configs = append(configs, cfg)
+			} else if h.loglevel >= 1 {
+				h.logger.Printf("skipping wildcard tool for language `%s` because `lint-command` is not defined.", f.LanguageID)
 			}
 		}
 	}
 
 	if len(configs) == 0 {
+		var msg string
 		if h.loglevel >= 1 {
-			h.logger.Printf("check configuration for linting `%s`, unable to load LanguageID", f.LanguageID)
+			if !hasConfigForLangID {
+				h.logger.Printf("no configuration found for linting language `%s`. Check the `languages` section in your config file.", f.LanguageID)
+			} else if lintToolsForLangID == 0 {
+				msg = fmt.Sprintf("configuration for linting language `%s` found, but no tools have a lint-command configured", f.LanguageID)
+				h.logger.Printf(msg)
+			} else {
+				if len(skippedReasons) > 0 {
+					msg = strings.Join(skippedReasons, "; ")
+				} else {
+					msg = fmt.Sprintf("configuration for linting language `%s` found, but no tools were applicable for the current action", f.LanguageID)
+				}
+				h.logger.Printf(msg)
+			}
+		}
+		if msg != "" {
+			h.showMessage(2, msg) // 2 = Warning
 		}
 		return map[DocumentURI][]Diagnostic{}, nil
 	}
