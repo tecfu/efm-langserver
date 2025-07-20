@@ -112,100 +112,119 @@ Configs:
 			continue
 		}
 
-		// File options
-		command := config.FormatCommand
-		if !config.FormatStdin && !strings.Contains(command, "${INPUT}") {
-			command = command + " ${INPUT}"
-		}
-		command = replaceCommandInputFilename(command, fname, h.rootPath)
+		var b []byte // This will hold the final formatted text
 
-		// Formatting Options
-		for placeholder, value := range options {
-			// {--flag:placeholder} => --flag <value>
-			// {--flag=placeholder} => --flag=<value>
-			// {--flag:!placeholder} => --flag if value is false
-			re, err := regexp.Compile(fmt.Sprintf(`\${([^:|^}]+):%s}`, placeholder))
-			re2, err2 := regexp.Compile(fmt.Sprintf(`\${([^=|^}]+)=%s}`, placeholder))
-			nre, nerr := regexp.Compile(fmt.Sprintf(`\${([^:|^}]+):!%s}`, placeholder))
-			nre2, nerr2 := regexp.Compile(fmt.Sprintf(`\${([^=|^}]+)=!%s}`, placeholder))
-			if err != nil || err2 != nil || nerr != nil || nerr2 != nil {
-				h.logger.Println(command+":", err)
+		if config.FormatInplace {
+			h.logger.Printf("Using native in-place formatter: %s", config.FormatCommand)
+
+			// 1. SAVE FIRST: Write the current buffer content to the original file.
+			// This synchronizes the disk with any unsaved changes, preventing data loss.
+			if err := os.WriteFile(fname, []byte(text), 0644); err != nil {
+				h.logger.Printf("Error writing buffer to disk for in-place format: %v", err)
 				continue Configs
 			}
 
-			switch v := value.(type) {
-			default:
-				command = re.ReplaceAllString(command, fmt.Sprintf("$1 %v", v))
-				command = re2.ReplaceAllString(command, fmt.Sprintf("$1=%v", v))
-			case bool:
-				const FLAG = "$1"
-				if v {
-					command = re.ReplaceAllString(command, FLAG)
-					command = re2.ReplaceAllString(command, FLAG)
-				} else {
-					command = nre.ReplaceAllString(command, FLAG)
-					command = nre2.ReplaceAllString(command, FLAG)
-				}
+			// 2. FORMAT IN-PLACE: The formatter command will now modify the up-to-date file on disk.
+			command := replaceCommandInputFilename(config.FormatCommand, fname, h.rootPath)
+
+			var cmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				cmd = exec.Command("cmd", "/c", command)
+			} else {
+				cmd = exec.Command("sh", "-c", command)
 			}
-		}
+			cmd.Dir = h.findRootPath(fname, config)
+			cmd.Env = append(os.Environ(), config.Env...)
 
-		// Range Options
-		if rng.Start.Line != -1 {
-			charStart := convertRowColToIndex(text, rng.Start.Line, rng.Start.Character)
-			charEnd := convertRowColToIndex(text, rng.End.Line, rng.End.Character)
-
-			rangeOptions := map[string]int{
-				"charStart": charStart,
-				"charEnd":   charEnd,
-				"rowStart":  rng.Start.Line,
-				"colStart":  rng.Start.Character,
-				"rowEnd":    rng.End.Line,
-				"colEnd":    rng.End.Character,
+			if output, err := cmd.CombinedOutput(); err != nil {
+				h.logger.Printf("in-place formatter exited with error: %v, output: %s", err, string(output))
 			}
 
-			for placeholder, value := range rangeOptions {
-				// {--flag:placeholder} => --flag <value>
-				// {--flag=placeholder} => --flag=<value>
+			// 3. READ BACK: Read the newly modified content from the original file.
+			b, err = os.ReadFile(fname)
+			if err != nil {
+				h.logger.Printf("Error reading file back from disk: %v", err)
+				continue Configs
+			}
+		} else {
+			// ORIGINAL STDIN/STDOUT LOGIC
+			command := config.FormatCommand
+			if !config.FormatStdin && !strings.Contains(command, "${INPUT}") {
+				command = command + " ${INPUT}"
+			}
+			command = replaceCommandInputFilename(command, fname, h.rootPath)
+
+			// Formatting Options
+			for placeholder, value := range options {
 				re, err := regexp.Compile(fmt.Sprintf(`\${([^:|^}]+):%s}`, placeholder))
 				re2, err2 := regexp.Compile(fmt.Sprintf(`\${([^=|^}]+)=%s}`, placeholder))
-				if err != nil || err2 != nil {
+				nre, nerr := regexp.Compile(fmt.Sprintf(`\${([^:|^}]+):!%s}`, placeholder))
+				nre2, nerr2 := regexp.Compile(fmt.Sprintf(`\${([^=|^}]+)=!%s}`, placeholder))
+				if err != nil || err2 != nil || nerr != nil || nerr2 != nil {
 					h.logger.Println(command+":", err)
 					continue Configs
 				}
-
-				command = re.ReplaceAllString(command, fmt.Sprintf("$1 %d", value))
-				command = re2.ReplaceAllString(command, fmt.Sprintf("$1=%d", value))
+				switch v := value.(type) {
+				default:
+					command = re.ReplaceAllString(command, fmt.Sprintf("$1 %v", v))
+					command = re2.ReplaceAllString(command, fmt.Sprintf("$1=%v", v))
+				case bool:
+					const FLAG = "$1"
+					if v {
+						command = re.ReplaceAllString(command, FLAG)
+						command = re2.ReplaceAllString(command, FLAG)
+					} else {
+						command = nre.ReplaceAllString(command, FLAG)
+						command = nre2.ReplaceAllString(command, FLAG)
+					}
+				}
 			}
-		}
+			if rng.Start.Line != -1 {
+				charStart := convertRowColToIndex(text, rng.Start.Line, rng.Start.Character)
+				charEnd := convertRowColToIndex(text, rng.End.Line, rng.End.Character)
+				rangeOptions := map[string]int{
+					"charStart": charStart, "charEnd": charEnd, "rowStart": rng.Start.Line, "colStart": rng.Start.Character, "rowEnd": rng.End.Line, "colEnd": rng.End.Character,
+				}
+				for placeholder, value := range rangeOptions {
+					re, err := regexp.Compile(fmt.Sprintf(`\${([^:|^}]+):%s}`, placeholder))
+					re2, err2 := regexp.Compile(fmt.Sprintf(`\${([^=|^}]+)=%s}`, placeholder))
+					if err != nil || err2 != nil {
+						h.logger.Println(command+":", err)
+						continue Configs
+					}
+					command = re.ReplaceAllString(command, fmt.Sprintf("$1 %d", value))
+					command = re2.ReplaceAllString(command, fmt.Sprintf("$1=%d", value))
+				}
+			}
+			re := regexp.MustCompile(`\${[^}]*}`)
+			command = re.ReplaceAllString(command, "")
 
-		// remove unfilled placeholders
-		re := regexp.MustCompile(`\${[^}]*}`)
-		command = re.ReplaceAllString(command, "")
+			var cmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				cmd = exec.Command("cmd", "/c", command)
+			} else {
+				cmd = exec.Command("sh", "-c", command)
+			}
+			cmd.Dir = h.findRootPath(fname, config)
+			cmd.Env = append(os.Environ(), config.Env...)
+			if config.FormatStdin {
+				cmd.Stdin = strings.NewReader(text)
+			}
 
-		// Execute the command
-		var cmd *exec.Cmd
-		if runtime.GOOS == "windows" {
-			cmd = exec.Command("cmd", "/c", command)
-		} else {
-			cmd = exec.Command("sh", "-c", command)
-		}
-		cmd.Dir = h.findRootPath(fname, config)
-		cmd.Env = append(os.Environ(), config.Env...)
-		if config.FormatStdin {
-			cmd.Stdin = strings.NewReader(text)
-		}
-		var buf bytes.Buffer
-		cmd.Stderr = &buf
-		b, err := cmd.Output()
-		if err != nil {
-			h.logger.Println(command+":", buf.String())
-			continue
+			var buf bytes.Buffer
+			cmd.Stderr = &buf
+			var err error
+			b, err = cmd.Output()
+			if err != nil {
+				h.logger.Println(command+":", buf.String())
+				continue
+			}
 		}
 
 		formatted = true
 
 		if h.loglevel >= 3 {
-			h.logger.Println(command+":", string(b))
+			h.logger.Println(config.FormatCommand+":", string(b))
 		}
 		text = strings.Replace(string(b), "\r", "", -1)
 	}

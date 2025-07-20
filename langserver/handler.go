@@ -93,6 +93,7 @@ type Language struct {
 	FormatCommand      string            `yaml:"format-command" json:"formatCommand"`
 	FormatCanRange     bool              `yaml:"format-can-range" json:"formatCanRange"`
 	FormatStdin        bool              `yaml:"format-stdin" json:"formatStdin"`
+	FormatInplace      bool              `yaml:"format-inplace" json:"formatInplace"`
 	SymbolCommand      string            `yaml:"symbol-command" json:"symbolCommand"`
 	SymbolStdin        bool              `yaml:"symbol-stdin" json:"symbolStdin"`
 	SymbolFormats      []string          `yaml:"symbol-formats" json:"symbolFormats"`
