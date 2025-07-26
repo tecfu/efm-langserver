@@ -30,6 +30,8 @@ func main() {
 	var dump bool
 	var showVersion bool
 	var quiet bool
+	var installDeps bool
+	var checkDeps bool
 
 	flag.StringVar(&yamlfile, "c", "", "path to config.yaml")
 	flag.StringVar(&logfile, "logfile", "", "logfile")
@@ -37,6 +39,8 @@ func main() {
 	flag.BoolVar(&dump, "d", false, "dump configuration")
 	flag.BoolVar(&showVersion, "v", false, "Print the version")
 	flag.BoolVar(&quiet, "q", false, "Run quieter")
+	flag.BoolVar(&installDeps, "install-deps", false, "Install missing tool dependencies")
+	flag.BoolVar(&checkDeps, "check-deps", false, "Check for missing tool dependencies")
 	flag.Parse()
 
 	if showVersion {
@@ -44,6 +48,7 @@ func main() {
 		return
 	}
 
+	// Determine config file path
 	if yamlfile == "" {
 		var configHome string
 		if runtime.GOOS == "windows" {
@@ -74,6 +79,66 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Set up logger for main function's output
+	mainLogger := log.New(os.Stderr, "", log.LstdFlags)
+	if logfile != "" {
+		f, err := os.OpenFile(logfile, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o660)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		mainLogger = log.New(f, "", log.LstdFlags)
+	}
+
+	if quiet {
+		mainLogger.SetOutput(io.Discard)
+	}
+
+	// Handle install-deps and check-deps commands
+	if installDeps || checkDeps {
+		mainLogger.Println("Running dependency check/install...")
+		ctx := context.Background()
+		var allTools []langserver.Language
+		for _, langConfigs := range *config.Languages {
+			for _, toolConfig := range langConfigs {
+				allTools = append(allTools, toolConfig)
+			}
+		}
+
+		// Add tools defined directly under 'tools' section
+		for _, toolConfig := range *config.Tools {
+			allTools = append(allTools, toolConfig)
+		}
+
+		var hadError bool
+		for _, toolConfig := range allTools {
+			toolName := ""
+			if toolConfig.LintCommand != "" {
+				toolName = toolConfig.LintCommand
+			} else if toolConfig.FormatCommand != "" {
+				toolName = toolConfig.FormatCommand
+			} else if toolConfig.CheckInstalled != "" {
+				toolName = toolConfig.CheckInstalled
+			} else {
+				continue // Skip if no relevant command to check
+			}
+
+			err := langserver.CheckAndInstallTool(ctx, mainLogger, toolConfig, toolName, installDeps)
+			if err != nil {
+				hadError = true
+				mainLogger.Printf("Error for tool %s: %v", toolName, err)
+			}
+		}
+
+		if hadError {
+			os.Exit(1)
+		} else {
+
+			mainLogger.Println("All tool dependencies checked/installed successfully.")
+			os.Exit(0)
+		}
+	}
+
 	if dump {
 		err = yaml.NewEncoder(os.Stdout).Encode(&config)
 		if err != nil {
@@ -87,11 +152,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if quiet {
-		log.SetOutput(io.Discard)
-	}
-
-	log.Println("efm-langserver: reading on stdin, writing on stdout")
+	mainLogger.Println("efm-langserver: reading on stdin, writing on stdout")
 
 	if logfile == "" {
 		logfile = config.LogFile
@@ -124,7 +185,7 @@ func main() {
 		jsonrpc2.NewBufferedStream(stdrwc{}, jsonrpc2.VSCodeObjectCodec{}),
 		handler, connOpt...).DisconnectNotify()
 
-	log.Println("efm-langserver: connections closed")
+	mainLogger.Println("efm-langserver: connections closed")
 }
 
 type stdrwc struct{}

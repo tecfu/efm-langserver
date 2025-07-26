@@ -95,6 +95,16 @@ func (h *langHandler) rangeFormatting(uri DocumentURI, rng Range, options Format
 		}
 	}
 
+	for _, config := range configs {
+		if config.FormatCommand != "" {
+			toolName := config.FormatCommand
+			if err := CheckAndInstallTool(context.Background(), h.logger, config, toolName, false); err != nil {
+				h.logMessage(LogError, fmt.Sprintf("Tool check/install failed for %s: %v", toolName, err))
+				continue
+			}
+		}
+	}
+
 	if len(configs) == 0 {
 		if h.loglevel >= 1 {
 			h.logger.Printf("format for LanguageID not supported: %v", f.LanguageID)

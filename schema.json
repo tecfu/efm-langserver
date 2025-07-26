@@ -167,6 +167,14 @@
         },
         "commands": {
           "$ref": "#/definitions/command-definition"
+        },
+        "install": {
+          "description": "Command to install the tool if it's not found.",
+          "type": "string"
+        },
+        "checkInstalled": {
+          "description": "Command to check if the tool is installed. If it returns a falsy value, the 'install' command will be invoked.",
+          "type": "string"
         }
       },
       "type": "object"

@@ -48,6 +48,7 @@ type Config struct {
 	LogLevel       int                    `yaml:"log-level"       json:"logLevel"`
 	Commands       *[]Command             `yaml:"commands"        json:"commands"`
 	Languages      *map[string][]Language `yaml:"languages"       json:"languages"`
+	Tools          *map[string]Language   `yaml:"tools"           json:"tools"`
 	RootMarkers    *[]string              `yaml:"root-markers"    json:"rootMarkers"`
 	TriggerChars   []string               `yaml:"trigger-chars"   json:"triggerChars"`
 	LintDebounce   Duration               `yaml:"lint-debounce"   json:"lintDebounce"`
@@ -107,6 +108,8 @@ type Language struct {
 	RootMarkers        []string          `yaml:"root-markers" json:"rootMarkers"`
 	RequireMarker      bool              `yaml:"require-marker" json:"requireMarker"`
 	Commands           []Command         `yaml:"commands" json:"commands"`
+	Install            string            `yaml:"install" json:"install"`
+	CheckInstalled     string            `yaml:"checkInstalled" json:"checkInstalled"`
 	Passthrough        *Passthrough      `yaml:"passthrough" json:"passthrough"`
 }
 
@@ -511,6 +514,20 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 	}
 	publishedURIs := make(map[DocumentURI]struct{})
 	for i, config := range configs {
+		toolName := ""
+		if config.LintCommand != "" {
+			toolName = config.LintCommand
+		} else if config.FormatCommand != "" {
+			toolName = config.FormatCommand
+		}
+
+		if toolName != "" {
+			if err := CheckAndInstallTool(ctx, h.logger, config, toolName, false); err != nil {
+				h.logMessage(LogError, fmt.Sprintf("Tool check/install failed for %s: %v", toolName, err))
+				continue
+			}
+		}
+
 		// To publish empty diagnostics when errors are fixed
 		if config.LintWorkspace {
 			for lastPublishedURI := range h.lastPublishedURIs[f.LanguageID] {

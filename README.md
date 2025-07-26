@@ -103,6 +103,23 @@ Example
       - requirements.txt
 ```
 
+### Tool Installation and Checking
+
+`efm-langserver` now supports automatic tool installation and checking. You can define `install` and `checkInstalled` commands within your tool configurations.
+
+-   `install`: (string, optional) A shell command that will be executed to install the tool if it's not found.
+-   `checkInstalled`: (string, optional) A shell command to verify if the tool is installed. If this command returns a non-zero exit code or no output, `efm-langserver` will consider the tool not installed. If an `install` command is provided, it will be executed. After installation, `checkInstalled` will be run again, and if it still fails, a fatal error will be reported.
+
+Example:
+```yaml
+tools:
+  my-linter:
+    lint-command: "my-linter --format compact ${INPUT}"
+    lint-stdin: true
+    checkInstalled: "which my-linter" # Checks if 'my-linter' is in PATH
+    install: "npm install -g my-linter" # Installs 'my-linter' globally using npm
+```
+
 ### JSON linter output and `lint-jq`
 
 efm-langserver supports extracting diagnostics from JSON linter output using the `lint-jq` configuration key. This allows you to process arbitrary linter JSON output and map it to Language Server Protocol (LSP) diagnostics using a [jq](https://stedolan.github.io/jq/) filter.

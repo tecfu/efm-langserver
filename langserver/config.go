@@ -14,6 +14,7 @@ func LoadConfig(yamlfile string) (*Config, error) {
 		ProvideDefinition: true, // Enabled by default.
 		Commands:          &[]Command{},
 		Languages:         &map[string][]Language{},
+		Tools:             &map[string]Language{},
 		RootMarkers:       &[]string{},
 	}
 	var config1 Config1
