@@ -27,9 +27,13 @@ generated from specified command. This is useful for editing code with linter.
 
 ## Installation
 
+NOTE: Ensure your $PATH contains $HOME/go/bin or modify the following per your system setup.
+
 ```console
 git clone git@github.com:tecfu/efm-langserver.git
-go build -o ~/efm-langserver-updated¬
+cd efm-langserver
+go build -o . && mv efm-langserver $HOME/go/bin/
+mv 
 ```
 
 ## Usage
