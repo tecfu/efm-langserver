@@ -35,7 +35,7 @@ func LoadConfig(yamlfile string) (*Config, error) {
 		defer f.Close()
 		err = yaml.NewDecoder(f).Decode(&config)
 		if err != nil {
-			return nil, fmt.Errorf("can not read configuration: %v", err)
+			return nil, fmt.Errorf("failed to parse YAML configuration file '%s': %v\n\nPlease check your YAML syntax, especially around line 123. Common issues include:\n- Missing colons after keys\n- Incorrect indentation\n- Missing quotes around string values\n- Invalid YAML anchors or references", yamlfile, err)
 		}
 	} else {
 		config.Version = config1.Version

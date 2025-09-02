@@ -152,6 +152,9 @@ func NewHandler(config *Config) jsonrpc2.Handler {
 		}
 	}
 	
+	// Check and install tools during initialization
+	go handler.checkAndInstallAllTools(config)
+	
 	go handler.linter()
 	return jsonrpc2.HandlerWithError(handler.handle)
 }
@@ -1051,6 +1054,70 @@ func (h *langHandler) findPassthrough(uri DocumentURI, method string) (*Passthro
 	}
 	
 	return nil, "", false
+}
+
+// checkAndInstallAllTools checks and installs all configured tools during startup
+func (h *langHandler) checkAndInstallAllTools(config *Config) {
+	ctx := context.Background()
+	h.logger.Printf("Starting tool dependency check and installation...")
+	
+	var allTools []Language
+	toolNames := make(map[string]bool) // To avoid duplicates
+	
+	// Collect tools from language configurations
+	for langID, langConfigs := range *config.Languages {
+		for _, toolConfig := range langConfigs {
+			toolName := h.getToolName(toolConfig)
+			if toolName != "" && !toolNames[toolName] {
+				allTools = append(allTools, toolConfig)
+				toolNames[toolName] = true
+				h.logger.Printf("Found tool '%s' for language '%s'", toolName, langID)
+			}
+		}
+	}
+	
+	// Add tools defined directly under 'tools' section
+	for toolName, toolConfig := range *config.Tools {
+		if !toolNames[toolName] {
+			allTools = append(allTools, toolConfig)
+			toolNames[toolName] = true
+			h.logger.Printf("Found tool '%s' in tools section", toolName)
+		}
+	}
+	
+	h.logger.Printf("Total tools to check: %d", len(allTools))
+	
+	var successCount, failureCount int
+	for _, toolConfig := range allTools {
+		toolName := h.getToolName(toolConfig)
+		if toolName == "" {
+			continue
+		}
+		
+		h.logger.Printf("Checking tool: %s", toolName)
+		err := CheckAndInstallTool(ctx, h.logger, toolConfig, toolName, true) // Always install if missing
+		if err != nil {
+			failureCount++
+			h.logger.Printf("Failed to check/install tool %s: %v", toolName, err)
+		} else {
+			successCount++
+			h.logger.Printf("Tool %s is ready", toolName)
+		}
+	}
+	
+	h.logger.Printf("Tool dependency check completed. Success: %d, Failures: %d", successCount, failureCount)
+}
+
+// getToolName extracts the tool name from a Language configuration
+func (h *langHandler) getToolName(toolConfig Language) string {
+	if toolConfig.LintCommand != "" {
+		return toolConfig.LintCommand
+	} else if toolConfig.FormatCommand != "" {
+		return toolConfig.FormatCommand
+	} else if toolConfig.CheckInstalled != "" {
+		return toolConfig.CheckInstalled
+	}
+	return ""
 }
 
 func (h *langHandler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
