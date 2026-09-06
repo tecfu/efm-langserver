@@ -137,6 +137,7 @@ func NewHandler(config *Config) jsonrpc2.Handler {
 
 		lastPublishedURIs: make(map[string]map[DocumentURI]struct{}),
 		passthroughServers: make(map[string]*PassthroughServer),
+		pendingLints:       make(map[DocumentURI]eventType),
 	}
 	
 	// Log configuration information for debugging
@@ -190,6 +191,7 @@ type langHandler struct {
 	// whether diagnostics are published in a DocumentURI or not.
 	lastPublishedURIs   map[string]map[DocumentURI]struct{}
 	passthroughServers  map[string]*PassthroughServer
+	pendingLints        map[DocumentURI]eventType
 	isShutdown          bool
 }
 
@@ -272,14 +274,30 @@ func toURI(path string) DocumentURI {
 	}).String())
 }
 
-func (h *langHandler) lintRequest(uri DocumentURI, eventType eventType) {
+func (h *langHandler) lintRequest(uri DocumentURI, event eventType) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.isShutdown {
+		return
+	}
+	h.pendingLints[uri] = event
 	if h.lintTimer != nil {
 		h.lintTimer.Reset(h.lintDebounce)
 		return
 	}
 	h.lintTimer = time.AfterFunc(h.lintDebounce, func() {
+		// Sending while holding the lock serializes this callback with
+		// shutdown(), which closes h.request under the same lock.
+		h.mu.Lock()
+		defer h.mu.Unlock()
 		h.lintTimer = nil
-		h.request <- lintRequest{URI: uri, EventType: eventType}
+		if h.isShutdown {
+			return
+		}
+		for pendingURI, pendingEventType := range h.pendingLints {
+			h.request <- lintRequest{URI: pendingURI, EventType: pendingEventType}
+		}
+		h.pendingLints = make(map[DocumentURI]eventType)
 	})
 }
 
@@ -690,7 +708,9 @@ func (h *langHandler) lint(ctx context.Context, uri DocumentURI, eventType event
 
 			// we allow the config to provide a mapping between LSP types E,W,I,N and whatever categories the linter has
 			if len(config.LintCategoryMap) > 0 {
-				entry.Type = []rune(config.LintCategoryMap[string(entry.Type)])[0]
+				if mapped, ok := config.LintCategoryMap[string(entry.Type)]; ok && mapped != "" {
+					entry.Type = []rune(mapped)[0]
+				}
 			}
 
 			severity := 1
@@ -1168,6 +1188,9 @@ func (h *langHandler) handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 		return h.handleWorkspaceWorkspaceFolders(ctx, conn, req)
 	}
 
+	if req.Notif {
+		return nil, nil
+	}
 	return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeMethodNotFound, Message: fmt.Sprintf("method not supported: %s", req.Method)}
 }
 
