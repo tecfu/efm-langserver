@@ -2,8 +2,25 @@
 
 [![Actions Status](https://github.com/mattn/efm-langserver/workflows/CI/badge.svg)](https://github.com/mattn/efm-langserver/actions)
 
-General purpose Language Server that can use specified error message format
-generated from specified command. This is useful for editing code with linter.
+A general-purpose language server that adds [LSP](https://microsoft.github.io/language-server-protocol/)
+support to traditional linters and formatters by acting as a proxy. Once
+[configured](#configuration) and [set up](#client-setup) for your editor
+of choice, it calls those tools when triggered over LSP, translates their
+output, and returns the result over LSP.
+
+```mermaid
+
+graph LR
+
+E["EDITOR or IDE"] <== LSP ==> S(("`**efm-langserver**`"))
+
+S <--> L["LINTER"]
+S <--> F["FORMATTER"]
+
+style S fill:orange,color:black
+```
+
+Here's `efm-langserver` in action:
 
 ![efm](https://raw.githubusercontent.com/mattn/efm-langserver/master/screenshot.png)
 
@@ -17,7 +34,7 @@ generated from specified command. This is useful for editing code with linter.
 * [Client Setup](#client-setup)
   + [Configuration for vim-lsp](#configuration-for-vim-lsp)
   + [Configuration for coc.nvim](#configuration-for-cocnvim)
-  + [Configuration for Eglot (Emacs)](#configuration-for-eglot)
+  + [Configuration for Eglot (Emacs)](#configuration-for-eglot-emacs)
   + [Configuration for neovim builtin LSP with nvim-lspconfig](#configuration-for-neovim-builtin-lsp-with-nvim-lspconfig)
   + [Configuration for Helix](#configuration-for-helix)
   + [Configuration for VSCode](#configuration-for-vscode)
@@ -34,6 +51,16 @@ git clone git@github.com:tecfu/efm-langserver.git
 cd efm-langserver
 go build -o . && mv efm-langserver $HOME/go/bin/
 mv 
+```
+
+### Termux (Android)
+
+Plain Linux binaries do not work in Termux due to a Go runtime limitation
+([golang/go#60125](https://github.com/golang/go/issues/60125)). Build with
+the android target instead:
+
+```console
+GOOS=android go install github.com/mattn/efm-langserver@latest
 ```
 
 ## Usage
@@ -277,12 +304,14 @@ tools:
     format-command: './node_modules/.bin/prettier ${--tab-width:tabWidth} ${--single-quote:singleQuote} --parser html'
 
   javascript-eslint: &javascript-eslint
-    lint-command: 'eslint -f visualstudio --stdin --stdin-filename ${INPUT}'
+    lint-command: 'eslint --stdin --stdin-filename ${INPUT}'
     lint-ignore-exit-code: true
     lint-stdin: true
+    lint-after-open: true
     lint-formats:
-      - "%f(%l,%c): %tarning %m"
-      - "%f(%l,%c): %rror %m"
+      - "%+P%f" # a file-like string on a single line.
+      - "%*[ ]%l:%c%*[ ]%t%*[^ ]%*[ ]%m" # Parse %l(ine) %c(olumn), %t(ype) and %m(essage)
+      - "%-O" # if not a match, pop filename from %P stack.
 
   json-fixjson: &json-fixjson
     format-command: 'fixjson'
@@ -591,7 +620,7 @@ Neovim's built-in LSP client sends `DidChangeConfiguration`, so `config.yaml` is
 `init.lua` example (`settings` follows [`schema.md`](schema.md)):
 
 ```lua
-require "lspconfig".efm.setup {
+vim.lsp.config("efm", {
     init_options = {documentFormatting = true},
     settings = {
         rootMarkers = {".git/"},
@@ -601,7 +630,8 @@ require "lspconfig".efm.setup {
             }
         }
     }
-}
+})
+vim.lsp.enable("efm")
 ```
 
 You can get premade tool definitions from [`creativenull/efmls-configs-nvim`](https://github.com/creativenull/efmls-configs-nvim):

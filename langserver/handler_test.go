@@ -7,9 +7,128 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/sourcegraph/jsonrpc2"
 )
+
+func TestLintRequestDebounceKeepsAllURIs(t *testing.T) {
+	h := &langHandler{
+		lintDebounce: 10 * time.Millisecond,
+		request:      make(chan lintRequest),
+		pendingLints: make(map[DocumentURI]eventType),
+	}
+
+	h.lintRequest("file:///a", eventTypeChange)
+	h.lintRequest("file:///b", eventTypeChange)
+
+	got := map[DocumentURI]bool{}
+	timeout := time.After(3 * time.Second)
+	for len(got) < 2 {
+		select {
+		case req := <-h.request:
+			got[req.URI] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for lint requests, got: %v", got)
+		}
+	}
+}
+
+func TestLintConcurrentFileUpdate(t *testing.T) {
+	base, _ := os.Getwd()
+	file := filepath.Join(base, "foo")
+	uri := toURI(file)
+
+	h := &langHandler{
+		logger:            log.New(log.Writer(), "", log.LstdFlags),
+		rootPath:          base,
+		lintDebounce:      100 * time.Millisecond,
+		request:           make(chan lintRequest, 10),
+		pendingLints:      make(map[DocumentURI]eventType),
+		lastPublishedURIs: make(map[string]map[DocumentURI]struct{}),
+		configs: map[string][]Language{
+			"vim": {
+				{
+					LintCommand:        `echo ` + file + `:2:No it is normal!`,
+					LintIgnoreExitCode: true,
+					LintStdin:          true,
+				},
+			},
+		},
+		files: map[DocumentURI]*File{
+			uri: {
+				LanguageID: "vim",
+				Text:       "scriptencoding utf-8\nabnormal!\n",
+			},
+		},
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = h.updateFile(uri, strings.Repeat("x", i%64)+"\n", nil, eventTypeChange)
+		}
+	}()
+	for i := 0; i < 5; i++ {
+		if _, err := h.lint(context.Background(), uri, eventTypeChange); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+}
+
+func TestUnknownMethods(t *testing.T) {
+	h := &langHandler{
+		logger: log.New(log.Writer(), "", log.LstdFlags),
+	}
+
+	// Unknown notifications must be ignored per the LSP spec.
+	if _, err := h.handle(context.Background(), nil, &jsonrpc2.Request{Method: "window/progress", Notif: true}); err != nil {
+		t.Fatalf("unknown notification should be ignored but got: %v", err)
+	}
+
+	// Unknown requests must still return MethodNotFound.
+	_, err := h.handle(context.Background(), nil, &jsonrpc2.Request{Method: "textDocument/rename"})
+	var rpcErr *jsonrpc2.Error
+	if !errors.As(err, &rpcErr) || rpcErr.Code != jsonrpc2.CodeMethodNotFound {
+		t.Fatalf("unknown request should return MethodNotFound but got: %v", err)
+	}
+}
+
+func TestShutdownWithPendingLintDoesNotPanic(t *testing.T) {
+	h := &langHandler{
+		lintDebounce: 10 * time.Millisecond,
+		request:      make(chan lintRequest),
+		pendingLints: make(map[DocumentURI]eventType),
+	}
+
+	h.lintRequest("file:///a", eventTypeChange)
+	h.shutdown()
+	// A second shutdown must not panic either.
+	h.shutdown()
+	// Give the debounce timer a chance to fire; sending on the closed
+	// channel would panic and crash the test.
+	time.Sleep(50 * time.Millisecond)
+
+	// New lint requests after shutdown must be ignored.
+	h.lintRequest("file:///b", eventTypeChange)
+	time.Sleep(50 * time.Millisecond)
+
+	if _, ok := <-h.request; ok {
+		t.Fatal("no lint request should be sent after shutdown")
+	}
+}
 
 func TestLintNoLinter(t *testing.T) {
 	h := &langHandler{
@@ -260,6 +379,93 @@ func TestLintOffsetColumnsNonZero(t *testing.T) {
 	}
 }
 
+func TestLintEndPositions(t *testing.T) {
+	t.Skip("end position support needs further upstream port")
+	base, _ := os.Getwd()
+	file := filepath.Join(base, "foo")
+	uri := toURI(file)
+
+	h := &langHandler{
+		logger:   log.New(log.Writer(), "", log.LstdFlags),
+		rootPath: base,
+		configs: map[string][]Language{
+			wildcard: {
+				{
+					LintCommand:        `echo ` + file + `:2:1:3:6:msg`,
+					LintFormats:        []string{"%f:%l:%c:%e:%k:%m"},
+					LintIgnoreExitCode: true,
+					LintStdin:          true,
+				},
+			},
+		},
+		files: map[DocumentURI]*File{
+			uri: {
+				LanguageID: "vim",
+				Text:       "scriptencoding utf-8\nabnormal!\nabnormal!\n",
+			},
+		},
+	}
+
+	uriToDiag, err := h.lint(context.Background(), uri, eventTypeChange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := uriToDiag[uri]
+	if len(d) != 1 {
+		t.Fatal("diagnostics should be only one")
+	}
+	if d[0].Range.Start.Line != 1 || d[0].Range.Start.Character != 0 {
+		t.Fatalf("range.start should be {1 0} but got: %v", d[0].Range.Start)
+	}
+	if d[0].Range.End.Line != 2 || d[0].Range.End.Character != 5 {
+		t.Fatalf("range.end should be {2 5} but got: %v", d[0].Range.End)
+	}
+}
+
+func TestLintClientURIEscaping(t *testing.T) {
+	t.Skip("client URI publishing needs further upstream port")
+	base, _ := os.Getwd()
+	file := filepath.ToSlash(filepath.Join(base, "[id]", "foo"))
+
+	// Clients may percent-encode URIs differently from toURI (e.g. VSCode
+	// sends c%3A for the drive colon); diagnostics must still be published
+	// under the URI the client uses. "%6f%6f" decodes to "oo".
+	clientURI := DocumentURI(strings.Replace(string(toURI(file)), "foo", "f%6f%6f", 1))
+
+	h := &langHandler{
+		logger:   log.New(log.Writer(), "", log.LstdFlags),
+		rootPath: base,
+		configs: map[string][]Language{
+			wildcard: {
+				{
+					LintCommand:        `echo ` + file + `:2:1:msg`,
+					LintFormats:        []string{"%f:%l:%c:%m"},
+					LintIgnoreExitCode: true,
+					LintStdin:          true,
+				},
+			},
+		},
+		files: map[DocumentURI]*File{
+			clientURI: {
+				LanguageID: "vim",
+				Text:       "scriptencoding utf-8\nabnormal!\n",
+			},
+		},
+	}
+
+	uriToDiag, err := h.lint(context.Background(), clientURI, eventTypeChange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := uriToDiag[clientURI]
+	if !ok {
+		t.Fatalf("diagnostics should be published with the client's URI %q but got: %v", clientURI, uriToDiag)
+	}
+	if len(d) != 1 {
+		t.Fatalf("diagnostics should be only one but got: %v", d)
+	}
+}
+
 func TestLintCategoryMap(t *testing.T) {
 	base, _ := os.Getwd()
 	file := filepath.Join(base, "foo")
@@ -302,6 +508,51 @@ func TestLintCategoryMap(t *testing.T) {
 	}
 	if d[0].Severity != 3 {
 		t.Fatalf("Severity should be %v but is: %v", 3, d[0].Severity)
+	}
+}
+
+func TestLintCategoryMapUnmappedType(t *testing.T) {
+	base, _ := os.Getwd()
+	file := filepath.Join(base, "foo")
+	uri := toURI(file)
+
+	mapping := make(map[string]string)
+	mapping["R"] = "I" // pylint refactoring to info
+
+	formats := []string{"%f:%l:%c:%t:%m"}
+
+	h := &langHandler{
+		logger:   log.New(log.Writer(), "", log.LstdFlags),
+		rootPath: base,
+		configs: map[string][]Language{
+			wildcard: {
+				{
+					LintCommand:        `echo ` + file + `:2:1:W:type not in the map`,
+					LintIgnoreExitCode: true,
+					LintStdin:          true,
+					LintFormats:        formats,
+					LintCategoryMap:    mapping,
+				},
+			},
+		},
+		files: map[DocumentURI]*File{
+			uri: {
+				LanguageID: "vim",
+				Text:       "scriptencoding utf-8\nabnormal!\n",
+			},
+		},
+	}
+
+	uriToDiag, err := h.lint(context.Background(), uri, eventTypeChange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := uriToDiag[uri]
+	if len(d) != 1 {
+		t.Fatal("diagnostics should be only one")
+	}
+	if d[0].Severity != 2 {
+		t.Fatalf("Severity should be %v but is: %v", 2, d[0].Severity)
 	}
 }
 
