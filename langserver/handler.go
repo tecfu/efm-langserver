@@ -91,7 +91,8 @@ type Language struct {
 	LintOnSave         bool              `yaml:"lint-on-save" json:"lintOnSave"`
 	LintJQ             string            `yaml:"lint-jq" json:"lintJq"`
 	FormatCommand      string            `yaml:"format-command" json:"formatCommand"`
-	FormatCanRange     bool              `yaml:"format-can-range" json:"formatCanRange"`
+	FormatCanRange       bool              `yaml:"format-can-range" json:"formatCanRange"`
+	FormatIgnoreExitCode bool              `yaml:"format-ignore-exit-code" json:"formatIgnoreExitCode"`
 	FormatStdin        bool              `yaml:"format-stdin" json:"formatStdin"`
 	FormatInplace      bool              `yaml:"format-inplace" json:"formatInplace"`
 	SymbolCommand      string            `yaml:"symbol-command" json:"symbolCommand"`
@@ -189,6 +190,7 @@ type langHandler struct {
 	// whether diagnostics are published in a DocumentURI or not.
 	lastPublishedURIs   map[string]map[DocumentURI]struct{}
 	passthroughServers  map[string]*PassthroughServer
+	isShutdown          bool
 }
 
 // File is

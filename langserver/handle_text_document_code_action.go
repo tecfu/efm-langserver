@@ -66,15 +66,13 @@ func (h *langHandler) executeCommand(params *ExecuteCommandParams) (any, error) 
 		}
 	}
 	if command == nil {
-		if command == nil {
-			if cfgs, ok := h.configs[wildcard]; ok {
-			loop_wild:
-				for _, cfg := range cfgs {
-					for _, v := range cfg.Commands {
-						if tok[1] == v.Command {
-							command = &v
-							break loop_wild
-						}
+		if cfgs, ok := h.configs[wildcard]; ok {
+		loop_wild:
+			for _, cfg := range cfgs {
+				for _, v := range cfg.Commands {
+					if tok[1] == v.Command {
+						command = &v
+						break loop_wild
 					}
 				}
 			}
@@ -139,12 +137,15 @@ func (h *langHandler) executeCommand(params *ExecuteCommandParams) (any, error) 
 			if err != nil {
 				return nil, err
 			}
+			h.mu.Lock()
 			h.commands = *config.Commands
 			h.configs = *config.Languages
 			h.rootMarkers = *config.RootMarkers
 			h.triggerChars = config.TriggerChars
 			h.loglevel = config.LogLevel
 			h.lintDebounce = time.Duration(config.LintDebounce)
+			h.formatDebounce = time.Duration(config.FormatDebounce)
+			h.mu.Unlock()
 		}
 		h.logMessage(LogInfo, "Reloaded configuration file")
 		output = "OK"

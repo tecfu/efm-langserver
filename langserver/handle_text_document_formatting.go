@@ -215,7 +215,7 @@ Configs:
 			cmd.Stderr = &buf
 			var err error
 			b, err = cmd.Output()
-			if err != nil {
+			if err != nil && !config.FormatIgnoreExitCode {
 				h.logger.Println(command+":", buf.String())
 				continue
 			}
